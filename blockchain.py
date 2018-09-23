@@ -50,7 +50,7 @@ def transaction():
 
 def proof_of_work(last_proof):
     incrementor = last_proof + 1
-    while !(incrementor % 5 == 0 and incrementor % last_proof == 0):
+    while not (incrementor % 5 == 0 and incrementor % last_proof == 0):
         incrementor += 1
     return incrementor
 
@@ -71,9 +71,9 @@ def mine():
 
     this_nodes_transactions = []
     new_block = Block(
-        new_block_index
-        new_block_timestamp
-        new_block_data
+        new_block_index,
+        new_block_timestamp,
+        new_block_data,
         last_block.hash
     )
     blockchain.append(new_block)
