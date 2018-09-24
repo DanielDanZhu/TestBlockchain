@@ -1,116 +1,191 @@
-from flask import Flask
-from flask import request
+import hashlib
 import json
+from time import time
+from urllib.parse import urlparse
+from uuid import uuid4
+
 import requests
-import hashlib as hasher
-import datetime as date
-node = Flask(__name__)
+from flask import Flask, jsonify, request
 
-class Block:
-    def __init__(self, index, timestamp, data, previous_hash):
-        self.index = index
-        self.timestamp = timestamp
-        self.data = data
-        self.previous_hash = previous_hash
-        self.hash = self.hash_block()
+class Blockchain:
+    def __init__(self):
+        self.chain = []
+        self.current_transactions = []
+        self.nodes = set()
 
-    def hash_block(self):
-        sha = hasher.sha256()
-        sha.update((str(self.index) + str(self.timestamp) + str(self.data) + str(self.previous_hash)).encode('utf-8'))
-        return sha.hexdigest()
+        # Genesis block
+        self.new_block(previous_hash = 1, proof = 100)
 
-def make_genesis():
-    return Block(0, date.datetime.now(), {"proof-of-work": 9, "transactions": None}, 0)
-
-def make_block(last_block):
-    new_index = last_block.index + 1
-    new_timestamp = date.datetime.now()
-    new_data = "Block " + str(new_index)
-    new_previous_hash = last_block.hash_block()
-    return Block(new_index, new_timestamp, new_data, new_previous_hash)
-
-blockchain = [make_genesis()]
-previous_block = blockchain[0]
-
-miner_address = "Amazing Grace"
-miners_reward = 2
-
-this_nodes_transactions = []
-peer_nodes = []
-
-@node.route('/txion', methods=['POST'])
-def transaction():
-    new_txion = request.get_json()
-    this_nodes_transactions.append(new_txion)
-    print("New transaction")
-    print("FROM: {}".format(new_txion['from']))
-    print("TO: {}".format(new_txion['to']))
-    print("AMOUNT: {}\n".format(new_txion['amount']))
-    return "Transaction successful"
-
-def proof_of_work(last_proof):
-    incrementor = last_proof + 1
-    while not (incrementor % 5 == 0 and incrementor % last_proof == 0):
-        incrementor += 1
-    return incrementor
-
-@node.route('/mine', methods = ['GET'])
-def mine():
-    last_block = blockchain[-1]
-    last_proof = last_block.data['proof-of-work']
-    proof = proof_of_work(last_proof)
-    this_node_transactions.append(
-        {"from": "network", "to": miner_address, "amount": miners_reward}
-    )
-    new_block_data = {
-        "proof-of-work": proof,
-        "transactions": this_nodes_transactions
-    }
-    new_block_index = last_block.index + 1
-    new_block_timestamp = date.datetime.now()
-
-    this_nodes_transactions = []
-    new_block = Block(
-        new_block_index,
-        new_block_timestamp,
-        new_block_data,
-        last_block.hash
-    )
-    blockchain.append(new_block)
-    return json.dumps({
-        "index": new_block_index,
-        "timestamp": str(new_block_timestamp),
-        "data": new_block_data,
-        "hash": last_block.hash
-    }) + "\n"
-
-@node.route('/blocks', methods=['GET'])
-def get_blocks():
-    chain_to_send = blockchain
-    for block in chain_to_send:
+    def new_block(self, proof, previous_hash = None):
         block = {
-            "index": str(block.index),
-            "timestamp": str(block.timestamp),
-            "data": str(block.data),
-            "hash": block.hash
+            'index': len(self.chain) + 1,
+            'timestamp': time(),
+            'transactions': self.current_transactions,
+            'proof': proof,
+            'previous_hash': previous_hash or self.hash(self.chain[-1])
         }
-    chain_to_send = json.dumps(chain_to_send)
-    return chain_to_send
+        self.current_transactions = []
+        self.chain.append(block)
+        return block
 
-def find_new_chains():
-    other_chains = []
-    for node_url in peer_nodes:
-        block = requests.get(node_url + "/blocks").content
-        block = json.loads(block)
-        other_chains.append(block)
-    return other_chains
+    def new_transaction(self, sender, recipient, amount):
+        self.current_transactions.append({
+            'sender': sender,
+            'recipient': recipient,
+            'amount': amount,
+        })
+        return self.last_block['index'] + 1
 
+    @property
+    def last_block(self):
+        return self.chain[-1]
+
+    @staticmethod
+    def hash(block):
+        block_string = json.dumps(block, sort_keys = True).encode()
+        return hashlib.sha256(block_string).hexdigest()
+
+    def proof_of_work(self, last_proof):
+        proof = 0
+        while self.valid_proof(last_proof, proof) is False:
+            proof += 1
+
+        return proof
+
+    @staticmethod
+    def valid_proof(last_proof, proof):
+        # Returns true if hashing the current proof appended to the
+        # last proof contains 4 leading zeroes
+        guess = f'{last_proof}{proof}'.encode()
+        guess_hash = hashlib.sha256(guess).hexdigest()
+        return guess_hash[:4] == "0000"
+
+    def register_node(self, address):
+        parsed_url = urlparse(address)
+        self.nodes.add(parsed_url.netloc)
+
+    def valid_chain(self, chain):
+        lsat_block = chain[0]
+        current_index = 1
+
+        while current_index < len(chain):
+            block = chain[current_index]
+            print(f'{last_block}')
+            print(f'{block}')
+            print("\n------------\n")
+            if block['previous)hash'] != self.hash(last_block):
+                return False
+
+            if not self.valid_proof(last_block['proof'], block['proof']):
+                return False
+
+            last_block = block
+            current_index += 1
+
+        return True
+
+    def resolve_conflicts(self):
+        neighbors = self.nodes
+        new_chain = None
+
+        max_length = len(self.chain)
+
+        for node in neighbors:
+            response = requests.get(f'http://{node}/chain')
+            if response.status_code == 200:
+                length = response.json()['length']
+                chain = response.json()['chain']
+
+                if length > max_length and self.valid_chain(chain):
+                    max_length = length
+                    new_chain = chain
+
+        if new_chain:
+            self.chain = new_chain
+            return True
+
+        return False
+
+# Boilerplate code
+app = Flask(__name__)
+node_identifier = str(uuid4()).replace('-', '')
+blockchain = Blockchain()
+
+@app.route('/mine', methods = ['GET'])
+def mine():
+    last_block = blockchain.last_block
+    last_proof = last_block['proof']
+    proof = blockchain.proof_of_work(last_proof)
+
+    blockchain.new_transaction(
+        sender = "0",
+        recipient = node_identifier,
+        amount = 1,
+    )
+
+    previous_hash = blockchain.hash(last_block)
+    block = blockchain.new_block(proof, previous_hash)
+
+    response = {
+        'message': "New Block Forged",
+        'index': block['index'],
+        'transactions': block['transactions'],
+        'proof': block['proof'],
+        'previous_hash': block['previous_hash'],
+    }
+    return jsonify(response), 200
+
+@app.route('/transactions/new', methods = ['POST'])
+def new_transaction():
+    values = request.get_json()
+    required = ['sender', 'recipient', 'amount']
+    if not all (k in values for k in required):
+        return 'Missing values', 400
+
+    index = blockchain.new_transaction(values['sender'], values['recipient'], values['amount'])
+    reponse = {'message': f'Transaction will be added to Block {index}'}
+    return jsonify(response), 201
+
+@app.route('/chain', methods = ['GET'])
+def full_chain():
+    response = {
+        'chain': blockchain.chain,
+        'length': len(blockchain.chain),
+    }
+    return jsonify (response), 200
+
+@app.route('/nodes/register', methods = ['POST'])
+def register_nodes():
+    values = request.get_json()
+
+    nodes = values.get('nodes')
+    if nodes is None:
+        return "Error: Please supply a valid list of nodes", 400
+
+    for node in nodes:
+        blockchain.register_node(node)
+
+    response = {
+        'message': 'New nodes added',
+        'total_nodes': list(blockchain.nodes),
+    }
+    return jsonify(response), 201
+
+@app.route('/nodes/resolve', methods = ['GET'])
 def consensus():
-    other_chains = find_new_chains()
-    longest_chain = blockchain
-    for chain in other_chains:
-        if len(longest_chain) < len(chain):
-            longest_chain = chain
-    blockchain = longest_chain
+    replaced = blockchain.resolve_conflicts()
 
-@node.run
+    if replaced:
+        reponse = {
+            'message': 'Chain replaced',
+            'new_chain': blockchain.chain
+        }
+    else:
+        response = {
+            'message': 'Chain sustained',
+            'chain': blockchain.chain
+        }
+    return jsonify(response), 200
+
+if __name__ == '__main__':
+    app.run(host = '0.0.0.0', port = 5000)
